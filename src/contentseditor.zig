@@ -29,18 +29,18 @@ pub const Contents = struct {
     allocator: std.mem.Allocator,
     max_line_len: usize,
     contents: std.ArrayList(*LineData),
-    open_file: std.fs.File,
+    open_path: []const u8,
 
     pub fn init(allocator: std.mem.Allocator, max_line_len: usize) !Contents {
         return Contents{
             .allocator = allocator,
             .max_line_len = max_line_len,
             .contents = std.ArrayList(*LineData).init(allocator),
-            .open_file = undefined,
+            .open_path = undefined,
         };
     }
 
-    pub fn write(self: *Contents, line: usize, col: usize, data: u8) !void {
+    pub fn write(self: *Contents, line: usize, col: usize, data: u8, is_insert: bool) !void {
         while (line >= self.contents.items.len) {
             self.contents.append(LineData.init(self.allocator, self.max_line_len) catch unreachable) catch unreachable;
         }
@@ -48,19 +48,42 @@ pub const Contents = struct {
             return error.OutOfBounds;
         }
         var line_ptr = self.contents.items[line];
+
+        if (is_insert) {
+            if (line_ptr.len + 1 > self.max_line_len) {
+                return error.OutOfBounds;
+            }
+            var i: usize = line_ptr.len;
+            while (i > col) : (i -= 1) {
+                line_ptr.data[i] = line_ptr.data[i - 1];
+            }
+            line_ptr.len += 1;
+        }
+
         line_ptr.data[col] = data;
 
         if (line_ptr.len < col + 1) {
             line_ptr.len = col + 1;
         }
     }
-
-    pub fn write_all(self: *Contents, line: usize, col: usize, data: []const u8) !void {
+    pub fn write_all(self: *Contents, line: usize, col: usize, data: []const u8, is_insert: bool) !void {
         if (col + data.len > self.max_line_len) {
             return error.OutOfBounds;
         }
-        const line_ptr = self.contents.items[line];
-        @memcpy(line_ptr.*.data[col .. col + data.len], data);
+        const line_ptr = self.get_or_create_line(line);
+
+        if (is_insert) {
+            if (line_ptr.len + data.len > self.max_line_len) {
+                return error.OutOfBounds;
+            }
+            var i: usize = line_ptr.len;
+            while (i > col) : (i -= 1) {
+                line_ptr.data[i + data.len - 1] = line_ptr.data[i - 1];
+            }
+            line_ptr.len += data.len;
+        }
+
+        @memcpy(line_ptr.data[col .. col + data.len], data);
 
         if (line_ptr.len < col + data.len) {
             line_ptr.len = col + data.len;
@@ -73,14 +96,14 @@ pub const Contents = struct {
         const to: usize = utils.minUsize(max + 1, self.contents.items.len);
         for (self.contents.items[from..to], from..to) |line, i| {
             if (cursor.y == i) {
-                std.debug.print("{d}:{s}", .{ i + 1, line.*.data[0..cursor.x] });
+                std.debug.print("{d} | {s}", .{ i + 1, line.*.data[0..cursor.x] });
                 terminal.set_color(tApi.TermColor.Red) catch unreachable;
                 std.debug.print("|", .{});
                 terminal.set_color(tApi.TermColor.White) catch unreachable;
                 std.debug.print("{s}\n", .{line.*.data[cursor.x..line.*.len]});
                 continue;
             }
-            std.debug.print("{d}:{s}\n", .{ i + 1, line.*.data[0..line.*.len] });
+            std.debug.print("{d} | {s}\n", .{ i + 1, line.*.data[0..line.*.len] });
         }
         std.debug.print("{d} {d}\n", .{ min, max });
     }
@@ -121,11 +144,11 @@ pub const Contents = struct {
     }
 
     pub fn load_from_file(self: *Contents, path: []const u8, allocator: std.mem.Allocator, max_lines: usize) !void {
-        const file = std.fs.openFileAbsolute(path, .{}) catch |err| {
+        const file = std.fs.cwd().openFile(path, .{}) catch |err| {
             std.debug.print("Error opening file: {?}\n", .{err});
             return;
         };
-        self.open_file = file;
+        self.open_path = path;
         const data = file.readToEndAlloc(allocator, self.max_line_len * max_lines) catch |err| {
             std.debug.print("Error reading file: {?}\n", .{err});
             return;
@@ -157,6 +180,19 @@ pub const Contents = struct {
             cur_idx += 1;
         }
         try self.contents.append(current_line);
+    }
+
+    pub fn save_to_file(self: *Contents, path: []const u8) !void {
+        const dir = std.fs.cwd();
+        const file = dir.createFile(path, .{}) catch |err| {
+            std.debug.print("Error creating file: {?}\n", .{err});
+            return;
+        };
+        defer file.close();
+        for (self.contents.items) |line| {
+            try file.writeAll(line.data[0..line.len]);
+            try file.writeAll("\n");
+        }
     }
 
     pub fn deinit(self: *Contents) void {

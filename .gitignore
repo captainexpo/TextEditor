@@ -7,4 +7,7 @@ zig-out/
 zigmod/
 .vscode/
 *.tmp
-*.swp
+*.log
+tmp/
+debug/
+thisissomeotherbullshit/
