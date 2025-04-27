@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const c = @cImport({
     @cInclude("unistd.h");
@@ -11,6 +12,18 @@ pub const WinSize = extern struct {
     xpixel: u16,
     ypixel: u16,
 };
+
+pub fn unified_get_size() WinSize {
+    const os = builtin.os.tag;
+    if (os == .linux) {
+        return get_size_linux();
+    } else if (os == .macos) {
+        return get_size_mac();
+    } else {
+        std.debug.print("Unsupported OS\n", .{});
+        return WinSize{ .rows = 0, .cols = 0, .xpixel = 0, .ypixel = 0 };
+    }
+}
 
 pub fn get_size_linux() WinSize {
     const stdout = std.io.getStdOut().handle;

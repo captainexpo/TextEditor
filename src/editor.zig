@@ -8,7 +8,9 @@ const KeyModifier = keyApi.KeyModifier;
 const Cursor = @import("cursor.zig").Cursor;
 const Contents = @import("contentseditor.zig").Contents;
 
-const get_size = @import("./terminalsize.zig").get_size_linux;
+const get_size = @import("./terminalsize.zig").unified_get_size;
+
+const utils = @import("utils.zig");
 
 pub const EditorMode = enum {
     Edit,
@@ -23,6 +25,7 @@ pub const Editor = struct {
     line_disp_max: usize,
     allocator: std.mem.Allocator,
     mode: EditorMode = .Edit,
+    debug_line: []const u8 = "",
 
     current_command: std.ArrayList(u8) = undefined,
 
@@ -63,14 +66,20 @@ pub const Editor = struct {
         return f - 5; // HACK: this is jank as fuck, but it's fine
     }
 
+    pub fn re_output(self: *Editor) void {
+        self.contents.output(&self.cursor, &self.terminal, self.line_disp_min, self.line_disp_max);
+        std.debug.print("Mode: {s}\n", .{@tagName(self.mode)});
+        std.debug.print("Dbg: {s}\n", .{self.debug_line});
+        std.debug.print("CMD: {s}", .{self.current_command.items});
+    }
+
     pub fn input_callback(self: *Editor, key: Key) void {
         if (key.modifier == KeyModifier.ArrowKey) {
             self.handle_arrow_key(key.code);
         } else {
             self.handle_regular_key(key.code);
         }
-        self.contents.output(&self.cursor, &self.terminal, self.line_disp_min, self.line_disp_max);
-        std.debug.print("Mode: {s}\n", .{@tagName(self.mode)});
+        self.re_output();
     }
 
     fn handle_arrow_key(self: *Editor, code: u8) void {
@@ -100,9 +109,12 @@ pub const Editor = struct {
     }
 
     fn move_cursor_up(self: *Editor) void {
+        const cl = self.contents.contents.items[self.cursor.y];
         self.contents.contents.items[self.cursor.y].last_pos = self.cursor.x;
         self.cursor.y -= if (self.cursor.y > 0) 1 else 0;
-        self.cursor.x = self.contents.get_or_create_line(self.cursor.y).*.last_pos;
+        const nl = self.contents.get_or_create_line(self.cursor.y);
+        // if length of previous line is == 0, jump to line's last position, else go to cursor's reg pos
+        self.cursor.x = if (cl.len > 0) utils.minUsize(self.cursor.x, nl.len) else nl.*.last_pos;
         while (self.cursor.y < self.line_disp_min and self.line_disp_min > 0) {
             self.line_disp_min -= 1;
             self.line_disp_max = self.line_disp_min + Editor.get_editor_height();
@@ -110,9 +122,12 @@ pub const Editor = struct {
     }
 
     fn move_cursor_down(self: *Editor) void {
+        const cl = self.contents.contents.items[self.cursor.y];
         self.contents.contents.items[self.cursor.y].last_pos = self.cursor.x;
         self.cursor.y += 1;
-        self.cursor.x = self.contents.get_or_create_line(self.cursor.y).*.last_pos;
+        const nl = self.contents.get_or_create_line(self.cursor.y);
+        // if length of previous line is == 0, jump to line's last position, else go to cursor's reg pos
+        self.cursor.x = if (cl.len > 0) utils.minUsize(self.cursor.x, nl.len) else nl.*.last_pos;
         while (self.cursor.y > self.line_disp_max) {
             self.line_disp_max += 1;
             const height = Editor.get_editor_height();
@@ -146,19 +161,81 @@ pub const Editor = struct {
         }
     }
 
+    fn parse_command_args(self: *Editor, command: []const u8) ![][]const u8 {
+        // Split by spaces
+        var args: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(self.allocator);
+        var start: usize = 0;
+        for (command, 0..command.len) |c, i| {
+            if (c == ' ') {
+                if (i > start) {
+                    const arg = command[start..i];
+                    try args.append(arg);
+                }
+                start = i + 1;
+            }
+        }
+        if (start < command.len) {
+            const arg = command[start..];
+            try args.append(arg);
+        }
+        return try args.toOwnedSlice();
+    }
+
+    // Command handler
+    fn quit_cmd(self: *Editor, args: [][]const u8) void {
+        _ = args;
+        self.deinit();
+        std.process.exit(0);
+    }
+    fn save_cmd(self: *Editor, args: [][]const u8) void {
+        _ = args;
+        self.contents.save_to_file(self.contents.open_path) catch |err| {
+            std.debug.print("Error saving to file: {?}\n", .{err});
+        };
+    }
+    fn to_edit_cmd(self: *Editor, args: [][]const u8) void {
+        _ = args;
+        self.mode = .Edit;
+    }
+    fn to_line_cmd(self: *Editor, args: [][]const u8) void {
+        // Jump to line
+        if (args.len == 1) {
+            const line = std.fmt.parseInt(u32, args[0], 10) catch |err| {
+                std.debug.print("Error parsing line number: {?}\n", .{err});
+                return;
+            };
+            if (line > 0 and line <= self.contents.contents.items.len) {
+                self.cursor.y = line - 1;
+                self.cursor.x = 0;
+                self.line_disp_min = self.cursor.y;
+                self.line_disp_max = self.cursor.y + Editor.get_editor_height();
+            } else {
+                self.debug_line = "Line number out of range";
+            }
+        } else {
+            self.debug_line = "Usage: <line_number>";
+        }
+    }
+
     fn handle_command(self: *Editor) void {
         if (self.current_command.items.len == 0) return;
+
+        var command_dispatcher = std.StringHashMap(*const fn (self: *Editor, args: [][]const u8) void).init(self.allocator);
+        command_dispatcher.put(@as([]const u8, "q"), &Editor.quit_cmd) catch unreachable;
+        command_dispatcher.put(@as([]const u8, "s"), &Editor.save_cmd) catch unreachable;
+        command_dispatcher.put(@as([]const u8, "e"), &Editor.to_edit_cmd) catch unreachable;
         const command = self.current_command.items;
-        if (std.mem.eql(u8, command, "q")) {
-            std.process.exit(0);
-        } else if (std.mem.eql(u8, command, "s")) {
-            self.contents.save_to_file(self.contents.open_path) catch |err| {
-                std.debug.print("Error saving to file: {?}\n", .{err});
-            };
-        } else if (std.mem.eql(u8, command, "e")) {
-            self.mode = .Edit;
+        const args = self.parse_command_args(command) catch |err| {
+            std.debug.print("Error parsing command: {?}\n", .{err});
+            return;
+        };
+        const command_func = command_dispatcher.get(command);
+        if (command_func) |func| {
+            func(self, args);
+        } else if (std.ascii.isDigit(command[0])) {
+            self.to_line_cmd(args);
         } else {
-            std.debug.print("Unknown command: {s}\n", .{command});
+            self.debug_line = "Unknown command";
         }
         self.current_command.clearRetainingCapacity();
     }

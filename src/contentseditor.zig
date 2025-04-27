@@ -3,6 +3,8 @@ const TerminalApi = @import("./termapi/termapi.zig").TerminalAPI;
 const Cursor = @import("cursor.zig").Cursor;
 const utils = @import("./utils.zig");
 const tApi = @import("./termapi/termapi.zig");
+
+// This is a comment
 pub const LineData = struct {
     data: []u8,
     len: usize,
@@ -93,20 +95,28 @@ pub const Contents = struct {
     pub fn output(self: *Contents, cursor: *Cursor, terminal: *TerminalApi, min: usize, max: usize) void {
         terminal.clear_screen();
         const from: usize = min;
-        const to: usize = utils.minUsize(max + 1, self.contents.items.len);
-        for (self.contents.items[from..to], from..to) |line, i| {
+        const to: usize = max + 1;
+
+        const MAX_LINE_DIGITS: comptime_int = 5;
+
+        for (from..to) |i| {
+            const line: *LineData = if (i < self.contents.items.len) self.contents.items[i] else undefined;
+            const line_digits: usize = @as(usize, @intFromFloat(@floor(@log10(@as(f32, @as(f32, @floatFromInt(i)) + 1))) + 1));
             if (cursor.y == i) {
-                std.debug.print("{d} | {s}", .{ i + 1, line.*.data[0..cursor.x] });
+                std.debug.print("{d}{s}| {s}", .{ i + 1, (" " ** MAX_LINE_DIGITS)[0 .. MAX_LINE_DIGITS - line_digits], line.*.data[0..cursor.x] });
                 terminal.set_color(tApi.TermColor.Red) catch unreachable;
                 std.debug.print("|", .{});
                 terminal.set_color(tApi.TermColor.White) catch unreachable;
                 std.debug.print("{s}\n", .{line.*.data[cursor.x..line.*.len]});
                 continue;
             }
-            std.debug.print("{d} | {s}\n", .{ i + 1, line.*.data[0..line.*.len] });
+            if (i >= self.contents.items.len) {
+                std.debug.print("{s}|\n", .{(" " ** MAX_LINE_DIGITS)[0..MAX_LINE_DIGITS]});
+            } else std.debug.print("{d}{s}| {s}\n", .{ i + 1, (" " ** MAX_LINE_DIGITS)[0 .. MAX_LINE_DIGITS - line_digits], line.*.data[0..line.*.len] });
         }
         std.debug.print("{d} {d}\n", .{ min, max });
     }
+    // This is another fucking comment :D
 
     pub fn bulk_delete(self: *Contents, cursor: *Cursor, rawcount: usize) void {
         if (cursor.y >= self.contents.items.len) {
@@ -133,7 +143,7 @@ pub const Contents = struct {
         @memcpy(new_line.data[0 .. old_line.len - col], old_line.data[col..old_line.len]);
         // Set the length of the new line
         new_line.len = old_line.len - col;
-        // Set the length of the old line
+        // Set the length of th e old line
         old_line.len = col;
     }
     pub fn get_or_create_line(self: *Contents, line: usize) *LineData {
