@@ -10,3 +10,4 @@ zigmod/
 *.log
 tmp/
 debug/
+.wakatime-project

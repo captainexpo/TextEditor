@@ -104,6 +104,8 @@ pub const Editor = struct {
             0x7F => self.handle_backspace(), // Backspace
             0x0A => self.handle_enter(), // Enter
             0x1B => self.handle_escape(),
+
+            // Shift
             else => self.handle_character_input(code),
         }
     }
@@ -114,7 +116,7 @@ pub const Editor = struct {
         self.cursor.y -= if (self.cursor.y > 0) 1 else 0;
         const nl = self.contents.get_or_create_line(self.cursor.y);
         // if length of previous line is == 0, jump to line's last position, else go to cursor's reg pos
-        self.cursor.x = if (cl.len > 0) utils.minUsize(self.cursor.x, nl.len) else nl.*.last_pos;
+        self.cursor.x = if (cl.len > 0) utils.min_usize(self.cursor.x, nl.len) else nl.*.last_pos;
         while (self.cursor.y < self.line_disp_min and self.line_disp_min > 0) {
             self.line_disp_min -= 1;
             self.line_disp_max = self.line_disp_min + Editor.get_editor_height();
@@ -127,7 +129,7 @@ pub const Editor = struct {
         self.cursor.y += 1;
         const nl = self.contents.get_or_create_line(self.cursor.y);
         // if length of previous line is == 0, jump to line's last position, else go to cursor's reg pos
-        self.cursor.x = if (cl.len > 0) utils.minUsize(self.cursor.x, nl.len) else nl.*.last_pos;
+        self.cursor.x = if (cl.len > 0) utils.min_usize(self.cursor.x, nl.len) else nl.*.last_pos;
         while (self.cursor.y > self.line_disp_max) {
             self.line_disp_max += 1;
             const height = Editor.get_editor_height();
@@ -156,9 +158,12 @@ pub const Editor = struct {
             self.contents.bulk_delete(&self.cursor, 1);
         } else {
             const line = self.contents.contents.orderedRemove(self.cursor.y);
-            line.deinit(self.allocator);
             self.cursor.y -= if (self.cursor.y > 0) 1 else 0;
-            self.cursor.x = self.contents.get_or_create_line(self.cursor.y).*.len;
+            const nl = self.contents.get_or_create_line(self.cursor.y);
+            self.cursor.x = nl.*.len;
+            self.contents.write_all(self.cursor.y, nl.*.len, line.data[0..line.len], true) catch |err| {
+                std.debug.print("Error writing to contents: {?}\n", .{err});
+            };
         }
     }
 
@@ -267,24 +272,24 @@ pub const Editor = struct {
         self.debug_line = "";
     }
     fn is_valid_line_idx(self: *Editor, line: usize) bool {
-       return line >= 0 and line < self.contents.contents.len; 
+        return line >= 0 and line < self.contents.contents.items.len;
     }
 
     fn del_line_cmd(self: *Editor, args: [][]const u8) void {
-       if (args.len != 2) {
+        if (args.len != 2) {
             self.set_dbg_line("Usage: dl <line>", .{});
             return;
-       }
-       const line = std.fmt.parseInt(usize, args[1], 10) catch |err| {
+        }
+        const line = std.fmt.parseInt(usize, args[1], 10) catch |err| {
             self.set_dbg_line("{?}", .{err});
             return;
-       };
-       if (!self.is_valid_line_idx(line)){
-           self.set_dbg_line("Line out of range", .{});
-           return;
-       }
+        };
+        if (!self.is_valid_line_idx(line)) {
+            self.set_dbg_line("Line out of range", .{});
+            return;
+        }
 
-       _ = self.contents.contents.orderedRemove(line - 1);
+        _ = self.contents.contents.orderedRemove(line - 1);
     }
     fn handle_command(self: *Editor) void {
         if (self.current_command.items.len == 0) return;
@@ -349,12 +354,3 @@ pub const Editor = struct {
         self.terminal.deinit();
     }
 };
-
-
-
-
-
-
-
-
-

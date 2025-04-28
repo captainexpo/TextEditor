@@ -4,6 +4,7 @@ const keyApi = @import("./key.zig");
 const Key = keyApi.Key;
 const KeyModifier = keyApi.KeyModifier;
 const Editor = @import("../editor.zig").Editor;
+const utils = @import("../utils.zig");
 
 const io = std.io;
 const c = @cImport({
@@ -110,6 +111,8 @@ pub const TerminalAPI = struct {
         const n = c.read(fd, &buf, buf.len);
         if (n <= 0) return null;
 
+        try utils.write_to_log_file("read_key: {s} ({d})\n", .{ buf[0..@as(usize, @intCast(n))], buf[0] });
+
         // 3) if it’s not ESC, it’s a normal key
         if (buf[0] != 0x1B) {
             return Key{ .code = buf[0], .modifier = KeyModifier.None };
@@ -117,6 +120,19 @@ pub const TerminalAPI = struct {
 
         // 4) if we got at least 3 bytes and it’s [ A/B/C/D ]
         if (n >= 3 and buf[1] == '[') {
+            // [1;2A is + shift
+            // [1;3A is + alt
+            // [1;5A is + ctrl
+            if (buf[2] == '1' and buf[3] == ';') {
+                utils.write_to_log_file("Read modifier + arrow key: {s}\n", .{buf[4..]}) catch unreachable;
+                const modifier = switch (buf[4]) {
+                    '2' => KeyModifier.Shift,
+                    '3' => KeyModifier.Alt,
+                    '5' => KeyModifier.Control,
+                    else => KeyModifier.None,
+                };
+                return Key{ .code = buf[5], .sub_modifier = modifier, .modifier = KeyModifier.ArrowKey };
+            }
             const arrow = buf[2];
             if (arrow == 'A' or arrow == 'B' or arrow == 'C' or arrow == 'D') {
                 return Key{ .code = arrow, .modifier = KeyModifier.ArrowKey };
