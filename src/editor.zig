@@ -146,6 +146,7 @@ pub const Editor = struct {
 
     fn handle_backspace(self: *Editor) void {
         if (self.mode == .Command) {
+            if (self.current_command.items.len == 0) return;
             _ = self.current_command.pop();
             std.debug.print("{c}", .{0x7F});
             return;
@@ -162,11 +163,22 @@ pub const Editor = struct {
     }
 
     fn parse_command_args(self: *Editor, command: []const u8) ![][]const u8 {
-        // Split by spaces
+        // Split by spaces, handling quotes
         var args: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(self.allocator);
         var start: usize = 0;
+        var in_quotes: bool = false;
+
         for (command, 0..command.len) |c, i| {
-            if (c == ' ') {
+            if (c == '"' and (i == 0 or command[i - 1] != '\\')) {
+                in_quotes = !in_quotes;
+                if (!in_quotes and i > start) {
+                    const arg = command[start..i];
+                    try args.append(arg);
+                    start = i + 1;
+                } else if (in_quotes) {
+                    start = i + 1;
+                }
+            } else if (c == ' ' and !in_quotes) {
                 if (i > start) {
                     const arg = command[start..i];
                     try args.append(arg);
@@ -174,13 +186,17 @@ pub const Editor = struct {
                 start = i + 1;
             }
         }
+
         if (start < command.len) {
             const arg = command[start..];
             try args.append(arg);
         }
+
         return try args.toOwnedSlice();
     }
-
+    fn set_dbg_line(self: *Editor, comptime fmt: []const u8, args: anytype) void {
+        self.debug_line = std.fmt.allocPrint(self.allocator, fmt, args) catch unreachable;
+    }
     // Command handler
     fn quit_cmd(self: *Editor, args: [][]const u8) void {
         _ = args;
@@ -201,7 +217,7 @@ pub const Editor = struct {
         // Jump to line
         if (args.len == 1) {
             const line = std.fmt.parseInt(u32, args[0], 10) catch |err| {
-                std.debug.print("Error parsing line number: {?}\n", .{err});
+                self.set_dbg_line("Error parsing line number: {?}\n", .{err});
                 return;
             };
             if (line > 0 and line <= self.contents.contents.items.len) {
@@ -217,6 +233,59 @@ pub const Editor = struct {
         }
     }
 
+    fn change_file_cmd(self: *Editor, args: [][]const u8) void {
+        if (args.len == 2) {
+            self.contents.load_from_file(args[1], self.allocator, self.contents.max_line_len) catch |err| {
+                self.set_dbg_line("Error loading file: {?}\n", .{err});
+            };
+            self.cursor.y = 0;
+            self.cursor.x = 0;
+            self.line_disp_min = 0;
+            self.line_disp_max = Editor.get_editor_height();
+        } else {
+            self.set_dbg_line("Usage: <file_path>", .{});
+        }
+    }
+
+    fn run_os_cmd(self: *Editor, args: [][]const u8) void {
+        if (args.len == 2) {
+            const output = std.process.Child.run(.{
+                .allocator = self.allocator,
+                .argv = args[1..],
+            }) catch |err| {
+                self.set_dbg_line("Error executing command: {?}\n", .{err});
+                return;
+            };
+            self.set_dbg_line("{s}\n", .{output.stdout});
+        } else {
+            self.debug_line = "Usage: <command>";
+        }
+    }
+
+    fn clear_dbg_cmd(self: *Editor, args: [][]const u8) void {
+        _ = args;
+        self.debug_line = "";
+    }
+    fn is_valid_line_idx(self: *Editor, line: usize) bool {
+       return line >= 0 and line < self.contents.contents.len; 
+    }
+
+    fn del_line_cmd(self: *Editor, args: [][]const u8) void {
+       if (args.len != 2) {
+            self.set_dbg_line("Usage: dl <line>", .{});
+            return;
+       }
+       const line = std.fmt.parseInt(usize, args[1], 10) catch |err| {
+            self.set_dbg_line("{?}", .{err});
+            return;
+       };
+       if (!self.is_valid_line_idx(line)){
+           self.set_dbg_line("Line out of range", .{});
+           return;
+       }
+
+       _ = self.contents.contents.orderedRemove(line - 1);
+    }
     fn handle_command(self: *Editor) void {
         if (self.current_command.items.len == 0) return;
 
@@ -224,18 +293,22 @@ pub const Editor = struct {
         command_dispatcher.put(@as([]const u8, "q"), &Editor.quit_cmd) catch unreachable;
         command_dispatcher.put(@as([]const u8, "s"), &Editor.save_cmd) catch unreachable;
         command_dispatcher.put(@as([]const u8, "e"), &Editor.to_edit_cmd) catch unreachable;
+        command_dispatcher.put(@as([]const u8, "chf"), &Editor.change_file_cmd) catch unreachable;
+        command_dispatcher.put(@as([]const u8, ">"), &Editor.run_os_cmd) catch unreachable;
+        command_dispatcher.put(@as([]const u8, "clr"), &Editor.clear_dbg_cmd) catch unreachable;
+        command_dispatcher.put(@as([]const u8, "dl"), &Editor.del_line_cmd) catch unreachable;
         const command = self.current_command.items;
         const args = self.parse_command_args(command) catch |err| {
             std.debug.print("Error parsing command: {?}\n", .{err});
             return;
         };
-        const command_func = command_dispatcher.get(command);
+        const command_func = command_dispatcher.get(args[0]);
         if (command_func) |func| {
             func(self, args);
         } else if (std.ascii.isDigit(command[0])) {
             self.to_line_cmd(args);
         } else {
-            self.debug_line = "Unknown command";
+            self.debug_line = std.fmt.allocPrint(self.allocator, "Unknown command {s}", .{command}) catch unreachable;
         }
         self.current_command.clearRetainingCapacity();
     }
@@ -276,3 +349,12 @@ pub const Editor = struct {
         self.terminal.deinit();
     }
 };
+
+
+
+
+
+
+
+
+
