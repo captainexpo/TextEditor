@@ -13,6 +13,10 @@ const c = @cImport({
     @cInclude("poll.h");
 });
 
+const read_term_key = @cImport({
+    @cInclude("get_input.h");
+});
+
 pub const TermColor = enum(u32) { // Contains ANSI color codes
     Reset = 0,
     Black = 30,
@@ -37,6 +41,8 @@ pub const TerminalAPI = struct {
         const stdout = io.getStdOut().writer();
         const stderr = io.getStdErr().writer();
         const tty = try std.fs.cwd().openFile("/dev/tty", .{});
+
+        read_term_key.enable_raw_mode();
 
         var t_api = TerminalAPI{
             .stdout = stdout,
@@ -95,52 +101,17 @@ pub const TerminalAPI = struct {
 
     pub fn read_key(self: *TerminalAPI) !?Key {
         _ = self;
-        const fd = c.STDIN_FILENO;
 
-        // 1) block until at least one byte is ready
-        var pfd = c.pollfd{
-            .fd = fd,
-            .events = c.POLLIN,
-            .revents = 0,
-        };
-        const rc = c.poll(&pfd, 1, -1);
-        if (rc < 0) return error.PollingError;
-
-        // 2) read *all* available bytes (up to 8) in one go
-        var buf: [8]u8 = undefined;
-        const n = c.read(fd, &buf, buf.len);
-        if (n <= 0) return null;
-
-        try utils.write_to_log_file("read_key: {s} ({d})\n", .{ buf[0..@as(usize, @intCast(n))], buf[0] });
-
-        // 3) if it’s not ESC, it’s a normal key
-        if (buf[0] != 0x1B) {
-            return Key{ .code = buf[0], .modifier = KeyModifier.None };
+        const key = read_term_key.get_input();
+        const code = @as(u8, @truncate(key.keyCode));
+        switch (key.modifiers) {
+            0b1 => return Key{ .code = code, .modifier = KeyModifier.Shift },
+            0b10 => return Key{ .code = code, .modifier = KeyModifier.Control },
+            0b100 => return Key{ .code = code, .modifier = KeyModifier.Alt },
+            0b1000 => return Key{ .code = code, .modifier = KeyModifier.ArrowKey },
+            0b10000 => return Key{ .code = code, .modifier = KeyModifier.FunctionKey },
+            else => return Key{ .code = code, .modifier = KeyModifier.None },
         }
-
-        // 4) if we got at least 3 bytes and it’s [ A/B/C/D ]
-        if (n >= 3 and buf[1] == '[') {
-            // [1;2A is + shift
-            // [1;3A is + alt
-            // [1;5A is + ctrl
-            if (buf[2] == '1' and buf[3] == ';') {
-                utils.write_to_log_file("Read modifier + arrow key: {s}\n", .{buf[4..]}) catch unreachable;
-                const modifier = switch (buf[4]) {
-                    '2' => KeyModifier.Shift,
-                    '3' => KeyModifier.Alt,
-                    '5' => KeyModifier.Control,
-                    else => KeyModifier.None,
-                };
-                return Key{ .code = buf[5], .sub_modifier = modifier, .modifier = KeyModifier.ArrowKey };
-            }
-            const arrow = buf[2];
-            if (arrow == 'A' or arrow == 'B' or arrow == 'C' or arrow == 'D') {
-                return Key{ .code = arrow, .modifier = KeyModifier.ArrowKey };
-            }
-        }
-
-        // 5) otherwise just return the ESC
-        return Key{ .code = buf[0], .modifier = KeyModifier.None };
     }
 
     pub fn run(self: *TerminalAPI) !void {

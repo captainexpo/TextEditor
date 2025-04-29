@@ -6,6 +6,7 @@ pub const KeyModifier = enum {
     Shift,
     Control,
     Alt,
+    FunctionKey,
 };
 
 pub const Key = struct {
