@@ -34,7 +34,6 @@ void enable_raw_mode() {
 void disable_raw_mode() {
     tcsetattr(STDIN_FILENO, TCSANOW, &original_termios);
 }
-
 Key get_input() {
     Key key = {0, 0};
     char c;
@@ -43,6 +42,7 @@ Key get_input() {
     read(STDIN_FILENO, &c, 1);
 
     if (c == '\033') { // ESC detected
+        //printf("<ESC> detected\n");
         struct timeval tv = {0, 50000}; // 50ms timeout
         fd_set fds;
         FD_ZERO(&fds);
@@ -53,14 +53,33 @@ Key get_input() {
             // More input after ESC
             char next;
             read(STDIN_FILENO, &next, 1);
+            //printf("Next char: %c\n", next);
             if (next == '[') {
-                char seq;
-                if (read(STDIN_FILENO, &seq, 1) > 0) {
-                    switch (seq) {
-                        case 'A': key.keyCode = 65; key.modifiers = ARROW_KEY_MODIFIER; break; // Up
-                        case 'B': key.keyCode = 66; key.modifiers = ARROW_KEY_MODIFIER; break; // Down
-                        case 'C': key.keyCode = 67; key.modifiers = ARROW_KEY_MODIFIER; break; // Right
-                        case 'D': key.keyCode = 68; key.modifiers = ARROW_KEY_MODIFIER; break; // Left
+                // Extended sequences
+                char seq[4] = {0};
+                read(STDIN_FILENO, &seq[0], 1); // Read first part of sequence
+                if (seq[0] >= '0' && seq[0] <= '9') {
+                    //printf("Fn key detected\n");
+                    read(STDIN_FILENO, &seq[1], 1); // Read separator (;)
+                    read(STDIN_FILENO, &seq[2], 1); // Read FN key number
+                    read(STDIN_FILENO, &seq[3], 1); // Read arrow key
+
+                    //printf("Fn key sequence: %c%c%c%c\n", seq[0], seq[1], seq[2], seq[3]);
+                    if (seq[1] == ';' && seq[2] >= '2' && seq[2] <= '6') {
+                        // Fn + Arrow keys
+                        switch (seq[2]) {
+                            case '2': key.keyCode = seq[3]; key.modifiers |= (SHIFT_KEY_MODIFIER | ARROW_KEY_MODIFIER); break; // Fn + Up
+                            case '3': key.keyCode = seq[3]; key.modifiers |= (ALT_KEY_MODIFIER | ARROW_KEY_MODIFIER); break; // Fn + Down
+                            case '5': key.keyCode = seq[3]; key.modifiers |= (CTRL_KEY_MODIFIER | ARROW_KEY_MODIFIER); break; // Fn + Right
+                        }
+                    }
+                } else {
+                    // Arrow keys
+                    switch (seq[0]) {
+                        case 'A': key.keyCode = 65; key.modifiers |= ARROW_KEY_MODIFIER; break; // Up
+                        case 'B': key.keyCode = 66; key.modifiers |= ARROW_KEY_MODIFIER; break; // Down
+                        case 'C': key.keyCode = 67; key.modifiers |= ARROW_KEY_MODIFIER; break; // Right
+                        case 'D': key.keyCode = 68; key.modifiers |= ARROW_KEY_MODIFIER; break; // Left
                     }
                 }
             } else {
@@ -69,7 +88,7 @@ Key get_input() {
                 key.modifiers = ALT_KEY_MODIFIER;
             }
         } else {
-            printf("ESC key pressed\n");
+            //printf("ESC key pressed\n");
             // Just an ESC key
             key.keyCode = 27;
             key.modifiers = ESCAPE_KEY_MODIFIER; // Added ESC key modifier

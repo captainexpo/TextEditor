@@ -1,16 +1,10 @@
 const std = @import("std");
 
-pub const KeyModifier = enum {
-    None,
-    ArrowKey,
-    Shift,
-    Control,
-    Alt,
-    FunctionKey,
-};
+pub const T_API = @cImport({
+    @cInclude("get_input.h");
+});
 
 pub const Key = struct {
     code: u8,
-    modifier: KeyModifier,
-    sub_modifier: KeyModifier = undefined,
+    modifier: u32,
 };

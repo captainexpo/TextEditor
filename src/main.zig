@@ -3,6 +3,7 @@ const tApi = @import("./termapi/termapi.zig");
 
 const Editor = @import("./editor.zig").Editor;
 var editor: Editor = undefined;
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();

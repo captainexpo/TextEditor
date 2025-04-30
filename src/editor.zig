@@ -3,7 +3,7 @@ const tApi = @import("./termapi/termapi.zig");
 
 const keyApi = @import("./termapi/key.zig");
 const Key = keyApi.Key;
-const KeyModifier = keyApi.KeyModifier;
+const T_API = keyApi.T_API;
 
 const Cursor = @import("cursor.zig").Cursor;
 const Contents = @import("contentseditor.zig").Contents;
@@ -74,7 +74,7 @@ pub const Editor = struct {
     }
 
     pub fn input_callback(self: *Editor, key: Key) void {
-        if (key.modifier == KeyModifier.ArrowKey) {
+        if (key.modifier ^ T_API.ARROW_KEY_MODIFIER == 0) {
             self.handle_arrow_key(key.code);
         } else {
             self.handle_regular_key(key.code);

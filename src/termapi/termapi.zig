@@ -32,6 +32,7 @@ pub const TermColor = enum(u32) { // Contains ANSI color codes
 pub const TerminalAPI = struct {
     stdout: std.fs.File.Writer,
     stderr: std.fs.File.Writer,
+
     allocator: std.mem.Allocator,
     tty: std.fs.File,
 
@@ -64,9 +65,7 @@ pub const TerminalAPI = struct {
             return;
         }
         // Modify termios to set raw mode
-        termios.c_lflag &= ~(@as(c_uint, c.ICANON | c.ECHO));
-        termios.c_cc[c.VMIN] = 1; // Minimum number of bytes before read() returns
-        termios.c_cc[c.VTIME] = 0; // No timeout
+        read_term_key.enable_raw_mode();
 
         res = c.tcsetattr(c.STDIN_FILENO, c.TCSANOW, &termios);
         if (res != 0) {
@@ -104,14 +103,8 @@ pub const TerminalAPI = struct {
 
         const key = read_term_key.get_input();
         const code = @as(u8, @truncate(key.keyCode));
-        switch (key.modifiers) {
-            0b1 => return Key{ .code = code, .modifier = KeyModifier.Shift },
-            0b10 => return Key{ .code = code, .modifier = KeyModifier.Control },
-            0b100 => return Key{ .code = code, .modifier = KeyModifier.Alt },
-            0b1000 => return Key{ .code = code, .modifier = KeyModifier.ArrowKey },
-            0b10000 => return Key{ .code = code, .modifier = KeyModifier.FunctionKey },
-            else => return Key{ .code = code, .modifier = KeyModifier.None },
-        }
+        utils.write_to_log_file("Key code: {}, {}\n", .{ code, key.modifiers }) catch unreachable;
+        return Key{ .code = code, .modifier = @as(u32, key.modifiers) };
     }
 
     pub fn run(self: *TerminalAPI) !void {
