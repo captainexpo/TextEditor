@@ -3,13 +3,32 @@ const tApi = @import("./termapi/termapi.zig");
 
 const Editor = @import("./editor.zig").Editor;
 
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var editor: Editor = undefined;
+var args: [][:0]u8 = undefined;
+pub fn onexit() void {
+    editor.terminal.clear_screen();
+    editor.deinit();
+    std.process.argsFree(gpa.allocator(), args);
+    if (gpa.detectLeaks()) {
+        std.debug.print("Memory leak detected!\n", .{});
+        std.process.exit(1);
+    }
+    _ = gpa.deinit();
+    std.process.exit(0);
+}
+
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    editor.terminal.clear_screen();
+
     const allocator = gpa.allocator();
 
-    //defer allocator.deinit(); // Ensure the allocator is properly deinitialized
-    const args = try std.process.argsAlloc(allocator);
-    var editor = try Editor.init(allocator, args);
+    args = try std.process.argsAlloc(allocator);
 
-    defer editor.deinit();
+    editor = try Editor.init(allocator, args, &onexit);
+
+    editor.start_running() catch |err| {
+        std.debug.print("Error: {}\n", .{err});
+        return err;
+    };
 }

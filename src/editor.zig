@@ -26,19 +26,20 @@ pub const Editor = struct {
     allocator: std.mem.Allocator,
     mode: EditorMode = .Edit,
     debug_line: []const u8 = "",
-
+    on_exit_callback: *const fn () void,
     current_command: std.ArrayList(u8) = undefined,
+    command_dispatcher: std.StringHashMap(*const fn (self: *Editor, args: [][]const u8) void) = undefined,
 
-    pub fn init(allocator: std.mem.Allocator, args: [][:0]u8) !Editor {
+    pub fn init(allocator: std.mem.Allocator, args: [][:0]u8, on_exit_callback: *const fn () void) !Editor {
         var contents = try Contents.init(allocator, 512);
         if (args.len >= 2) {
             try contents.load_from_file(args[1], allocator, contents.max_line_len);
         }
 
-        var cursor = Cursor{ .x = 0, .y = 0 };
-        var terminal = try tApi.TerminalAPI.new(allocator);
+        const cursor = Cursor{ .x = 0, .y = 0 };
+        const terminal = try tApi.TerminalAPI.new(allocator);
 
-        var editor = Editor{
+        const editor = Editor{
             .terminal = terminal,
             .cursor = cursor,
             .contents = contents,
@@ -47,17 +48,20 @@ pub const Editor = struct {
             .allocator = allocator,
             .mode = .Edit,
             .current_command = std.ArrayList(u8).init(allocator),
+            .on_exit_callback = on_exit_callback,
+            .command_dispatcher = std.StringHashMap(*const fn (self: *Editor, args: [][]const u8) void).init(allocator),
         };
 
-        terminal.init();
-        terminal.clear_screen();
-
-        contents.output(&cursor, &terminal, 0, editor.line_disp_max);
-
-        terminal.onInput(&editor);
-        try terminal.run();
-
         return editor;
+    }
+
+    pub fn start_running(self: *Editor) !void {
+        self.terminal.init();
+        self.terminal.clear_screen();
+
+        self.contents.output(&self.cursor, &self.terminal, 0, self.line_disp_max);
+        self.terminal.onInput(self);
+        try self.terminal.run();
     }
 
     pub fn get_editor_height() usize {
@@ -170,6 +174,8 @@ pub const Editor = struct {
     fn parse_command_args(self: *Editor, command: []const u8) ![][]const u8 {
         // Split by spaces, handling quotes
         var args: std.ArrayList([]const u8) = std.ArrayList([]const u8).init(self.allocator);
+        defer args.deinit();
+
         var start: usize = 0;
         var in_quotes: bool = false;
 
@@ -197,7 +203,8 @@ pub const Editor = struct {
             try args.append(arg);
         }
 
-        return try args.toOwnedSlice();
+        const s = try args.toOwnedSlice();
+        return s;
     }
 
     fn set_dbg_line(self: *Editor, comptime fmt: []const u8, args: anytype) void {
@@ -207,8 +214,7 @@ pub const Editor = struct {
     // Command handler
     fn quit_cmd(self: *Editor, args: [][]const u8) void {
         _ = args;
-        self.deinit();
-        std.process.exit(0);
+        self.on_exit_callback();
     }
 
     fn save_cmd(self: *Editor, args: [][]const u8) void {
@@ -315,22 +321,24 @@ pub const Editor = struct {
 
     fn handle_command(self: *Editor) void {
         if (self.current_command.items.len == 0) return;
-
-        var command_dispatcher = std.StringHashMap(*const fn (self: *Editor, args: [][]const u8) void).init(self.allocator);
-        command_dispatcher.put(@as([]const u8, "q"), &Editor.quit_cmd) catch unreachable;
-        command_dispatcher.put(@as([]const u8, "s"), &Editor.save_cmd) catch unreachable;
-        command_dispatcher.put(@as([]const u8, "e"), &Editor.to_edit_cmd) catch unreachable;
-        command_dispatcher.put(@as([]const u8, "chf"), &Editor.change_file_cmd) catch unreachable;
-        command_dispatcher.put(@as([]const u8, ">"), &Editor.run_os_cmd) catch unreachable;
-        command_dispatcher.put(@as([]const u8, "clr"), &Editor.clear_dbg_cmd) catch unreachable;
-        command_dispatcher.put(@as([]const u8, "dl"), &Editor.del_line_cmd) catch unreachable;
-        command_dispatcher.put(@as([]const u8, "find"), &Editor.find_and_replace_cmd) catch unreachable;
+        if (self.command_dispatcher.count() == 0) {
+            self.command_dispatcher.put(@as([]const u8, "q"), &Editor.quit_cmd) catch unreachable;
+            self.command_dispatcher.put(@as([]const u8, "s"), &Editor.save_cmd) catch unreachable;
+            self.command_dispatcher.put(@as([]const u8, "e"), &Editor.to_edit_cmd) catch unreachable;
+            self.command_dispatcher.put(@as([]const u8, "chf"), &Editor.change_file_cmd) catch unreachable;
+            self.command_dispatcher.put(@as([]const u8, ">"), &Editor.run_os_cmd) catch unreachable;
+            self.command_dispatcher.put(@as([]const u8, "clr"), &Editor.clear_dbg_cmd) catch unreachable;
+            self.command_dispatcher.put(@as([]const u8, "dl"), &Editor.del_line_cmd) catch unreachable;
+            self.command_dispatcher.put(@as([]const u8, "find"), &Editor.find_and_replace_cmd) catch unreachable;
+        }
         const command = self.current_command.items;
         const args = self.parse_command_args(command) catch |err| {
             std.debug.print("Error parsing command: {?}\n", .{err});
             return;
         };
-        const command_func = command_dispatcher.get(args[0]);
+        defer self.allocator.free(args);
+
+        const command_func = self.command_dispatcher.get(args[0]);
         if (command_func) |func| {
             func(self, args);
         } else if (std.ascii.isDigit(command[0])) {
@@ -373,6 +381,8 @@ pub const Editor = struct {
     }
 
     pub fn deinit(self: *Editor) void {
+        self.current_command.deinit();
+        self.command_dispatcher.deinit();
         self.contents.deinit();
         self.terminal.deinit();
     }

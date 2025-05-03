@@ -10,6 +10,7 @@ pub const LineData = struct {
     data: []u8,
     len: usize,
     last_pos: usize,
+    allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, max_line_len: usize) !*LineData {
         var buf = try allocator.alloc(u8, max_line_len);
@@ -20,11 +21,14 @@ pub const LineData = struct {
         l.data = buf;
         l.len = 0;
         l.last_pos = 0;
+        l.allocator = allocator;
         return l;
     }
 
-    pub fn deinit(self: *LineData, allocator: std.mem.Allocator) void {
-        allocator.free(self.data);
+    pub fn deinit(self: *LineData) void {
+        std.debug.print("deinit line data\n", .{});
+        self.allocator.free(self.data);
+        self.allocator.destroy(self);
     }
 
     pub fn replace(self: *LineData, allocator: std.mem.Allocator, find: []const u8, rep: []const u8) !void {
@@ -225,6 +229,8 @@ pub const Contents = struct {
             cur_idx += 1;
         }
         try self.contents.append(current_line);
+
+        allocator.free(data);
     }
 
     pub fn save_to_file(self: *Contents, path: []const u8) !void {
@@ -242,7 +248,7 @@ pub const Contents = struct {
 
     pub fn deinit(self: *Contents) void {
         for (self.contents.items) |line| {
-            line.deinit(self.allocator);
+            line.*.deinit();
         }
         self.contents.deinit();
     }
