@@ -199,25 +199,30 @@ pub const Editor = struct {
 
         return try args.toOwnedSlice();
     }
+
     fn set_dbg_line(self: *Editor, comptime fmt: []const u8, args: anytype) void {
         self.debug_line = std.fmt.allocPrint(self.allocator, fmt, args) catch unreachable;
     }
+
     // Command handler
     fn quit_cmd(self: *Editor, args: [][]const u8) void {
         _ = args;
         self.deinit();
         std.process.exit(0);
     }
+
     fn save_cmd(self: *Editor, args: [][]const u8) void {
         _ = args;
         self.contents.save_to_file(self.contents.open_path) catch |err| {
             std.debug.print("Error saving to file: {?}\n", .{err});
         };
     }
+
     fn to_edit_cmd(self: *Editor, args: [][]const u8) void {
         _ = args;
         self.mode = .Edit;
     }
+
     fn to_line_cmd(self: *Editor, args: [][]const u8) void {
         // Jump to line
         if (args.len == 1) {
@@ -288,9 +293,26 @@ pub const Editor = struct {
             self.set_dbg_line("Line out of range", .{});
             return;
         }
-
+        self.cursor.y -= 1;
         _ = self.contents.contents.orderedRemove(line - 1);
     }
+    fn find_and_replace_cmd(self: *Editor, args: [][]const u8) void {
+        if (args.len != 3) {
+            self.set_dbg_line("Usage: find <find> <replace>", .{});
+            return;
+        }
+        const find = args[1];
+        const replace = args[2];
+        for (0..self.contents.contents.items.len, self.contents.contents.items) |i, line| {
+            line.replace(self.allocator, find, replace) catch |err| {
+                self.set_dbg_line("Error replacing: {?}", .{err});
+                if (i == self.cursor.y) {
+                    self.cursor.x = @min(line.len - 1, self.cursor.x);
+                }
+            };
+        }
+    }
+
     fn handle_command(self: *Editor) void {
         if (self.current_command.items.len == 0) return;
 
@@ -302,6 +324,7 @@ pub const Editor = struct {
         command_dispatcher.put(@as([]const u8, ">"), &Editor.run_os_cmd) catch unreachable;
         command_dispatcher.put(@as([]const u8, "clr"), &Editor.clear_dbg_cmd) catch unreachable;
         command_dispatcher.put(@as([]const u8, "dl"), &Editor.del_line_cmd) catch unreachable;
+        command_dispatcher.put(@as([]const u8, "find"), &Editor.find_and_replace_cmd) catch unreachable;
         const command = self.current_command.items;
         const args = self.parse_command_args(command) catch |err| {
             std.debug.print("Error parsing command: {?}\n", .{err});

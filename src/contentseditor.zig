@@ -3,6 +3,7 @@ const TerminalApi = @import("./termapi/termapi.zig").TerminalAPI;
 const Cursor = @import("cursor.zig").Cursor;
 const utils = @import("./utils.zig");
 const tApi = @import("./termapi/termapi.zig");
+const re = @cImport(@cInclude("regez.h"));
 
 // This is a comment
 pub const LineData = struct {
@@ -24,6 +25,38 @@ pub const LineData = struct {
 
     pub fn deinit(self: *LineData, allocator: std.mem.Allocator) void {
         allocator.free(self.data);
+    }
+
+    pub fn replace(self: *LineData, allocator: std.mem.Allocator, find: []const u8, rep: []const u8) !void {
+        utils.write_to_log_file("finding '{s}' with '{s}'\n", .{ find, rep }) catch unreachable;
+
+        // Where find is a regex
+        const find_cstr = try std.fmt.allocPrintZ(allocator, "{s}", .{find});
+        defer allocator.free(find_cstr);
+
+        const rep_cstr = try std.fmt.allocPrintZ(allocator, "{s}", .{rep});
+        defer allocator.free(rep_cstr);
+
+        const output: [:0]u8 = allocator.allocSentinel(u8, self.len, 0) catch unreachable;
+        defer allocator.free(output);
+
+        const input = std.fmt.allocPrintZ(allocator, "{s}", .{self.data[0..self.len]}) catch unreachable;
+        defer allocator.free(input);
+
+        const sizeof_output: c_uint = @as(c_uint, @intCast(8 * (self.len + 1)));
+
+        re.regex_replace(find_cstr, rep_cstr, input, output, sizeof_output);
+
+        self.len = output.len;
+        @memcpy(self.data[0..self.len], output);
+        utils.write_to_log_file("{d}: {s}\n", .{ self.len, self.data }) catch |err| {
+            std.debug.print("Error writing to log file: {?}\n", .{err});
+            return;
+        };
+    }
+
+    pub fn get_data(self: *LineData) []const u8 {
+        return self.data[0..self.len];
     }
 };
 
@@ -112,7 +145,9 @@ pub const Contents = struct {
             }
             if (i >= self.contents.items.len) {
                 std.debug.print("{s}|\n", .{(" " ** MAX_LINE_DIGITS)[0..MAX_LINE_DIGITS]});
-            } else std.debug.print("{d}{s}| {s}\n", .{ i + 1, (" " ** MAX_LINE_DIGITS)[0 .. MAX_LINE_DIGITS - line_digits], line.*.data[0..line.*.len] });
+            } else {
+                std.debug.print("{d}{s}| {s}\n", .{ i + 1, (" " ** MAX_LINE_DIGITS)[0 .. MAX_LINE_DIGITS - line_digits], line.get_data() });
+            }
         }
         std.debug.print("{d} {d}\n", .{ min, max });
     }

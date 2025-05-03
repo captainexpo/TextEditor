@@ -29,6 +29,10 @@ pub fn build(b: *std.Build) void {
         .file = b.path("src/termapi/c_libs/src/get_input.c"),
         .flags = &.{},
     });
+    exe.addCSourceFile(.{
+        .file = b.path("src/termapi/c_libs/src/regez.c"),
+        .flags = &.{},
+    });
     exe.addIncludePath(b.path("src/termapi/c_libs/include"));
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
