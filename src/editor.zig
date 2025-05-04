@@ -299,7 +299,8 @@ pub const Editor = struct {
             self.set_dbg_line("Line out of range", .{});
             return;
         }
-        self.cursor.y -= 1;
+        if (self.cursor.y >= line)
+            self.cursor.y -= 1;
         _ = self.contents.contents.orderedRemove(line - 1);
     }
     fn find_and_replace_cmd(self: *Editor, args: [][]const u8) void {

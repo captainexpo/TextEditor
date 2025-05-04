@@ -26,7 +26,6 @@ pub const LineData = struct {
     }
 
     pub fn deinit(self: *LineData) void {
-        std.debug.print("deinit line data\n", .{});
         self.allocator.free(self.data);
         self.allocator.destroy(self);
     }
